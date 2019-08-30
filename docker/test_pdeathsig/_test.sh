@@ -22,4 +22,4 @@ echo "Detect whether the child is alive..." >>/dev/stderr
 msg=$(kill -0 $looper_pid 2>&1 || true)
 echo $msg | grep -i "no such process" >/dev/null
 
-echo "PASS"
+echo "\n@@PASS@@"
