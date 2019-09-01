@@ -4,7 +4,10 @@ import (
 	"context"
 	"flag"
 	"log"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
@@ -22,7 +25,8 @@ var (
 	selfName     = flag.String("name", "", "Name, which would be registered into etcd.")
 )
 
-func runCampaign(cli *clientv3.Client, id string) {
+// Return false if it's stopped.
+func runCampaign(cli *clientv3.Client, id string, quitc <-chan struct{}) bool {
 	// create elections
 	sess, err := concurrency.NewSession(cli, concurrency.WithTTL(*electionTTL))
 	if err != nil {
@@ -44,13 +48,17 @@ func runCampaign(cli *clientv3.Client, id string) {
 		if err != nil {
 			log.Print("Command exits unexpectedly: ", err)
 		}
-		break
+	case <-quitc:
+		log.Print("Quit!")
+		cancel()
+		<-errc
+		return false
 	case <-sess.Done():
 		log.Print("Session expired.")
 		cancel()
 		<-errc
-		break
 	}
+	return true
 }
 
 func main() {
@@ -74,10 +82,21 @@ func main() {
 	}
 	defer cli.Close()
 
+	signalc := make(chan os.Signal, 1)
+	signal.Notify(signalc, syscall.SIGINT, syscall.SIGTERM)
+	quitc := make(chan struct{})
+	go func() {
+		s := <-signalc
+		log.Print("Got signal: ", s)
+		close(quitc)
+	}()
+
 	var round uint64
 	for {
 		log.Printf("Start campaign for Round[%v].", round)
-		runCampaign(cli, *selfName)
+		if !runCampaign(cli, *selfName, quitc) {
+			break
+		}
 		round++
 		time.Sleep(time.Second * 1)
 	}
